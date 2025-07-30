@@ -1,6 +1,7 @@
 import sys
 import time
 import requests
+import json
 from antlr4 import *
 from TerraformSubsetLexer import TerraformSubsetLexer
 from TerraformSubsetParser import TerraformSubsetParser
@@ -54,6 +55,7 @@ class TerraformApplyListener(TerraformSubsetListener):
         raise Exception(f"Undefined variable '{var_name}' used in provider block.")
     return self.provider_token_expr.strip('"')
 
+
 def create_droplet(api_token, config):
   url = "https://api.digitalocean.com/v2/droplets"
   headers = {
@@ -81,6 +83,7 @@ def create_droplet(api_token, config):
   droplet = response.json()["droplet"]
   droplet_id = droplet["id"]
   print(f"[+] Droplet created with ID: {droplet_id}")
+  
 
   print("[*] Waiting for droplet to become active and assigned an IP...")
   while True:
@@ -89,17 +92,56 @@ def create_droplet(api_token, config):
     networks = droplet_info["networks"]["v4"]
     public_ips = [n["ip_address"] for n in networks if n["type"] == "public"]
     if public_ips:
+      # Save .tfstate
+      save_droplet_state("terraform.tfstate", {
+        "id": droplet_id,
+        "name": droplet["name"],
+        "region": droplet["region"],
+        "size": droplet["size"],
+        "image": droplet["image"]["slug"] if isinstance(droplet["image"], dict) else droplet["image"],
+        "ip": public_ips[0]
+      })
       return public_ips[0]
     time.sleep(5)
+    
 
+def destroy_droplet(api_token, droplet_id):
+  url = "https://api.digitalocean.com/v2/droplets"
+  headers = {
+    "Authorization": f"Bearer {api_token}"
+  }
+  print(f"[+] Destroying Droplet with ID: {droplet_id}")
+  response = requests.delete(url, headers=headers)
+  
+  if response.status_code == 204:
+    print("[+] Droplet succesfully destroyed")
+  else:
+    print(f"[!] Failed to destroy droplet. Status: {response.status_code}")
+    print(response.text)
+    
+## File managing for droplet state
+def save_droplet_state(filepath, droplet_info):
+    with open(filepath, 'w') as f:
+        json.dump(droplet_info, f, indent=2)
+    print(f"[+] State saved to {filepath}")  
+
+def load_droplet_state(filepath):
+    with open(filepath, 'r') as f:
+        return json.load(f)
+    
+# Main
 def main(argv):
   input_stream = FileStream(argv[1])
+  flag = argv[2]
+  if flag not in ['create', 'destroy']:
+    raise Exception("Flag musy be either \'create\' or \'destroy\' ")
   lexer = TerraformSubsetLexer(input_stream)
   stream = CommonTokenStream(lexer)
   parser = TerraformSubsetParser(stream)
   tree = parser.terraform()
 
   listener = TerraformApplyListener()
+
   walker = ParseTreeWalker()
   walker.walk(listener, tree)
 
@@ -107,8 +149,12 @@ def main(argv):
   if not listener.droplet_config:
     raise Exception("Missing digitalocean_droplet resource.")
 
-  ip = create_droplet(token, listener.droplet_config)
-  print(f"[✓] Droplet available at IP: {ip}")
+  if flag=='create':
+    ip = create_droplet(token, listener.droplet_config)
+    print(f"[✓] Droplet available at IP: {ip}")
+  if flag=='destroy':
+    state = load_droplet_state("droplet_state.json")
+    destroy_droplet(token, state["id"])
 
 if __name__ == "__main__":
   main(sys.argv)
