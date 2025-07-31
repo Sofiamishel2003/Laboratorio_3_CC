@@ -106,7 +106,7 @@ def create_droplet(api_token, config):
     
 
 def destroy_droplet(api_token, droplet_id):
-  url = "https://api.digitalocean.com/v2/droplets"
+  url = f"https://api.digitalocean.com/v2/droplets/{droplet_id}"
   headers = {
     "Authorization": f"Bearer {api_token}"
   }
@@ -153,7 +153,7 @@ def main(argv):
     ip = create_droplet(token, listener.droplet_config)
     print(f"[✓] Droplet available at IP: {ip}")
   if flag=='destroy':
-    state = load_droplet_state("droplet_state.json")
+    state = load_droplet_state("terraform.tfstate")
     destroy_droplet(token, state["id"])
 
 if __name__ == "__main__":
